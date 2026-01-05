@@ -6,45 +6,61 @@ import vtk
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 class FreeMoveController:
-    def __init__(self, actor, interactor, renderer):
-        self.actor = actor
+    def __init__(self, actors, interactor, renderer):
+        self.actors = actors
+        self.selected_actors = []
         self.interactor = interactor
         self.renderer = renderer
         self.free_move = False
-        self.old_position = actor.GetPosition()
+        self.old_positions = {}
 
 
     def key_press(self, obj, event):
         key = obj.GetKeySym()
-        print(key)  
+         
 
-        if key == "m":
+        if key == "m" and self.selected_actors:
             self.free_move = True
-            self.old_position = self.actor.GetPosition()
+           
             
 
-        elif key == "Escape":
-            print("e")
-            self.actor.SetPosition(self.old_position)
+
+        elif key == "Escape" and self.selected_actors:
+
+            print("ESC pressed", self.old_positions)
+            for actor, pos in self.old_positions.items():
+                actor.SetPosition(pos)
+            
             self.free_move = False
             self.interactor.GetRenderWindow().Render()
+        
 
         
 
-        elif key == "Return":
-            print ("d")
+        elif key == "Return" and self.selected_actors:
+            self.old_positions ={
+                actor: actor.GetPosition()
+
+
+
+                for actor  in self.selected_actors 
+
+            }
             self.free_move = False
             self.interactor.GetRenderWindow().Render()
             
 
     def mouse_move(self, obj, event):
-        if not self.free_move:
+        if not self.free_move or not self.selected_actors:
             return
         x, y = obj.GetEventPosition()
-        
-        wx, wy, wz = self.actor.GetPosition()
 
-        self.renderer.SetWorldPoint (wx,wy,wz,2.0)
+        ref_actor = self.selected_actors[0]
+
+        
+        wx, wy, wz = ref_actor.GetPosition()
+
+        self.renderer.SetWorldPoint (wx,wy,wz,1.0)
         self.renderer.WorldToDisplay()
         _, _, display_z = self.renderer.GetDisplayPoint()
 
@@ -60,14 +76,44 @@ class FreeMoveController:
             ny = world_point[1] / world_point[3]
             nz = world_point[2] / world_point[3]
             
-            self.actor.SetPosition(nx ,ny ,nz)
-        
-    
+            dx = nx - wx
+            dy = ny - wy
+            dz = nz - wz
 
-        self.interactor.GetRenderWindow().Render()     
+            for actor in self.selected_actors:
+                ax, ay, az = actor.GetPosition()
+                actor.SetPosition(ax +dx, ay+ dy , az + dz)  
+        self.renderer.ResetCameraClippingRange()            
+
+        self.interactor.GetRenderWindow().Render() 
+        
 
     def left_key(self,obj, event):
-        self.free_move = False    
+        self.free_move =  False
+        x, y = obj.GetEventPosition()
+
+        picker = vtk.vtkPropPicker()
+        picker.Pick(x, y, 0, self.renderer)
+        actor = picker.GetActor()
+
+        if actor not in self.actors:
+            return
+        ctrl_pressed = obj.GetControlKey()
+
+
+        if not ctrl_pressed:
+            for a in self.selected_actors:
+                a.GetProperty().SetEdgeVisibility(0)
+            self.selected_actors.clear()
+            self.old_positions.clear()
+
+        if actor not in self.selected_actors:
+            self.selected_actors.append(actor)
+            self.old_positions[actor] = actor.GetPosition()                    
+
+            actor.GetProperty().SetEdgeVisibility(1)
+            actor.GetProperty().SetEdgeColor(1, 1, 0)    
+
 
 
 class WinMain(QMainWindow):
@@ -96,21 +142,27 @@ class WinMain(QMainWindow):
         self.interactor.SetInteractorStyle(
             vtk.vtkInteractorStyleTrackballCamera()
         )
+        
+        self.actors = []
+
+        def create_cube(x, y, z, color):
+            cube = vtk.vtkCubeSource()
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(cube.GetOutputPort())
+
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.SetPosition(x, y, z)
+            actor.GetProperty().SetColor(color)
+
+            self.renderer.AddActor(actor)
+            self.actors.append(actor)
+
+        create_cube(-2, 0, 0, (0, 1, 1))   
+        create_cube(2, 0, 0, (1, 0, 0))    
+
 
         
-        cube = vtk.vtkCubeSource()
-        cube.SetXLength(1)
-        cube.SetYLength(1)
-        cube.SetZLength(1)
-
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(cube.GetOutputPort())
-
-        self.actor = vtk.vtkActor()
-        self.actor.SetMapper(mapper)
-        self.actor.GetProperty().SetColor(1, 1, 0)
-
-        self.renderer.AddActor(self.actor)
         self.renderer.SetBackground(0.2, 0.2, 0.2)
 
         
@@ -118,7 +170,7 @@ class WinMain(QMainWindow):
 
         
         self.controller = FreeMoveController(
-            self.actor, self.interactor, self.renderer
+            self.actors, self.interactor, self.renderer
         )
 
         self.interactor.AddObserver(
